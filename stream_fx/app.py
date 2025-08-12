@@ -68,31 +68,23 @@ class CameraThread(threading.Thread):
         self.running = False
 
 # --- Plugin Loading ---
-def load_plugins() -> Dict[str, BaseFilter]:
-    """Dynamically loads all filter plugins from the 'filters' directory."""
+def load_plugins_from_directory(directory: str, module_prefix: str) -> Dict[str, BaseFilter]:
+    """Helper function to load plugins from a specific directory."""
     plugins = {}
-    
-    try:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        filters_dir_path = os.path.join(script_dir, "filters")
-    except NameError:
-        filters_dir_path = "filters"
-
-    logging.info(f"Searching for plugins in '{filters_dir_path}' directory...")
-    if not os.path.isdir(filters_dir_path):
-        logging.error(f"Filters directory not found at '{filters_dir_path}'. Please ensure it exists.")
+    if not os.path.isdir(directory):
+        logging.warning(f"Plugin directory not found: {directory}")
         return plugins
-
-    for filename in os.listdir(filters_dir_path):
-        if filename.endswith(".py") and not filename.startswith("__") and filename != "base_filter.py":
-            module_name = f"filters.{filename[:-3]}"
+        
+    for filename in os.listdir(directory):
+        if filename.endswith(".py") and not filename.startswith("__"):
+            module_name = f"{module_prefix}.{filename[:-3]}"
             try:
                 module = importlib.import_module(module_name)
                 for item_name in dir(module):
                     item = getattr(module, item_name)
                     if isinstance(item, type) and issubclass(item, BaseFilter) and item is not BaseFilter:
                         plugin_instance = item()
-                        plugin_instance.initialize() # Call optional initializer
+                        plugin_instance.initialize()
                         plugins[plugin_instance.identifier] = plugin_instance
                         logging.info(f"Successfully loaded plugin: '{plugin_instance.name}' ({plugin_instance.identifier})")
             except (ImportError, ModuleNotFoundError) as e:
@@ -101,11 +93,29 @@ def load_plugins() -> Dict[str, BaseFilter]:
                 logging.error(f"An unexpected error occurred while loading plugin from {filename}: {e}")
     return plugins
 
+def load_all_plugins(enable_advanced: bool) -> Dict[str, BaseFilter]:
+    """Dynamically loads all filter plugins."""
+    all_plugins = {}
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Load standard filters
+    filters_dir_path = os.path.join(script_dir, "filters")
+    all_plugins.update(load_plugins_from_directory(filters_dir_path, "filters"))
+
+    # Conditionally load advanced filters
+    if enable_advanced:
+        logging.info("Advanced filters enabled. Loading...")
+        advanced_filters_dir_path = os.path.join(filters_dir_path, "advanced")
+        all_plugins.update(load_plugins_from_directory(advanced_filters_dir_path, "filters.advanced"))
+    else:
+        logging.info("Advanced filters disabled. To enable, use the --enable_advanced_filters flag.")
+        
+    return all_plugins
+
 # --- FastAPI App and Global variables ---
 app = FastAPI()
 output_frame = None
 lock = threading.Lock()
-loaded_plugins = load_plugins()
 
 # --- Global State Management ---
 state = {
@@ -194,6 +204,7 @@ async def get_ui():
 
 # --- Application Logic ---
 running = True
+loaded_plugins = {}
 
 def signal_handler(sig, frame):
     """Handles the Ctrl+C signal to gracefully exit the application."""
@@ -219,6 +230,11 @@ def parse_arguments():
         default=0,
         help='Index of the camera to use (e.g., 0, 1, 2).'
     )
+    parser.add_argument(
+        '--enable_advanced_filters',
+        action='store_true',
+        help='Enable loading of advanced filters from the filters/advanced directory.'
+    )
     return parser.parse_args()
 
 def handle_debug_input():
@@ -233,12 +249,15 @@ def main():
     """
     Main function to run the camera processing and the FastAPI streaming server.
     """
-    global output_frame, lock, running, state, state_lock
+    global output_frame, lock, running, state, state_lock, loaded_plugins
     
     args = parse_arguments()
     
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    # Load plugins based on the command-line argument
+    loaded_plugins = load_all_plugins(args.enable_advanced_filters)
 
     signal.signal(signal.SIGINT, signal_handler)
     
@@ -307,3 +326,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
