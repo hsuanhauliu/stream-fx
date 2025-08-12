@@ -95,8 +95,10 @@ def load_plugins() -> Dict[str, BaseFilter]:
                         plugin_instance.initialize() # Call optional initializer
                         plugins[plugin_instance.identifier] = plugin_instance
                         logging.info(f"Successfully loaded plugin: '{plugin_instance.name}' ({plugin_instance.identifier})")
+            except (ImportError, ModuleNotFoundError) as e:
+                logging.warning(f"Could not load plugin from {filename} due to a missing dependency: {e}")
             except Exception as e:
-                logging.error(f"Failed to load plugin from {filename}: {e}")
+                logging.error(f"An unexpected error occurred while loading plugin from {filename}: {e}")
     return plugins
 
 # --- FastAPI App and Global variables ---
