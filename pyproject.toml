@@ -16,6 +16,8 @@ dependencies = [
 [tool.poetry]
 packages = [{include = "stream_fx", from = "."}]
 
+[tool.poetry.scripts]
+stream-fx = "stream_fx.app:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

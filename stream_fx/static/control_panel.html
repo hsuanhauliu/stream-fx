@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>StreamFX Control</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 20px; background-color: #f0f2f5; color: #1c1e21; }
+        .main-container { max-width: 800px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;}
+        .header h1 { margin: 0; color: #1877f2; }
+        .header-controls button { margin-left: 10px; }
+        .columns { display: flex; gap: 20px; }
+        .column { flex: 1; background-color: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: opacity 0.3s; }
+        .column.disabled { opacity: 0.5; pointer-events: none; background-color: #f0f2f5; }
+        h2 { font-size: 1.2em; color: #606770; border-bottom: 1px solid #ddd; padding-bottom: 10px; margin-top: 0; }
+        .filter-list { min-height: 200px; list-style-type: none; padding: 0; }
+        .filter-item { background-color: #e4e6eb; color: #050505; padding: 10px; margin-bottom: 8px; border-radius: 6px; cursor: grab; user-select: none; display: flex; justify-content: space-between; align-items: center; }
+        .filter-item:active { cursor: grabbing; }
+        .remove-btn { cursor: pointer; color: #606770; font-weight: bold; padding: 0 5px; }
+        .dragging { opacity: 0.5; }
+        .small-btn { font-size: 0.8em; padding: 6px 10px; cursor: pointer; background-color: #ddd; border: none; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <div class="header">
+            <h1>StreamFX Control</h1>
+            <div class="header-controls">
+                <button id="clear-stack-btn" class="small-btn">Clear All</button>
+                <button id="toggle-all-btn" class="small-btn">Disable All</button>
+            </div>
+        </div>
+        <div class="columns" id="columns-container">
+            <div class="column" id="available-column">
+                <h2>Available Filters</h2>
+                <ul id="available-filters" class="filter-list"></ul>
+            </div>
+            <div class="column" id="active-column">
+                <h2>Active Filter Stack</h2>
+                <ul id="active-filters" class="filter-list"></ul>
+            </div>
+        </div>
+    </div>
+    <script>
+        const availableList = document.getElementById('available-filters');
+        const activeList = document.getElementById('active-filters');
+        const clearStackBtn = document.getElementById('clear-stack-btn');
+        const toggleAllBtn = document.getElementById('toggle-all-btn');
+        const activeColumn = document.getElementById('active-column');
+        
+        let availableFilters = [];
+        let activeEffects = [];
+        let effectsEnabled = true;
+        let draggedItem = null;
+
+        async function sendStackUpdate() {
+            const newStack = Array.from(activeList.children).map(item => item.dataset.identifier);
+            try {
+                await fetch('/control/set_stack', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ effects: newStack })
+                });
+            } catch (error) {
+                console.error('Failed to update stack:', error);
+            }
+        }
+
+        function renderLists() {
+            availableList.innerHTML = '';
+            activeList.innerHTML = '';
+
+            const activeSet = new Set(activeEffects);
+            availableFilters.forEach(filter => {
+                if (!activeSet.has(filter.identifier)) {
+                    const li = createFilterItem(filter, false);
+                    availableList.appendChild(li);
+                }
+            });
+
+            activeEffects.forEach(effectId => {
+                const filter = availableFilters.find(f => f.identifier === effectId);
+                if (filter) {
+                    const li = createFilterItem(filter, true);
+                    activeList.appendChild(li);
+                }
+            });
+        }
+
+        function createFilterItem(filter, isActive) {
+            const li = document.createElement('li');
+            li.className = 'filter-item';
+            li.dataset.identifier = filter.identifier;
+            li.draggable = true;
+            li.textContent = filter.name;
+            
+            if (isActive) {
+                const removeBtn = document.createElement('span');
+                removeBtn.className = 'remove-btn';
+                removeBtn.textContent = '✕';
+                removeBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    activeEffects = activeEffects.filter(id => id !== filter.identifier);
+                    renderLists();
+                    sendStackUpdate();
+                };
+                li.appendChild(removeBtn);
+            } else {
+                li.onclick = () => {
+                    activeEffects.push(filter.identifier);
+                    renderLists();
+                    sendStackUpdate();
+                };
+            }
+            return li;
+        }
+
+        async function initializeUI() {
+            try {
+                const response = await fetch('/control/status');
+                const data = await response.json();
+                availableFilters = data.available_filters;
+                activeEffects = data.active_effects;
+                effectsEnabled = data.effects_enabled;
+                
+                updateDisableUI();
+                renderLists();
+            } catch (error) {
+                console.error('Failed to initialize UI:', error);
+            }
+        }
+
+        function updateDisableUI() {
+            if (effectsEnabled) {
+                toggleAllBtn.textContent = 'Disable All';
+                activeColumn.classList.remove('disabled');
+            } else {
+                toggleAllBtn.textContent = 'Enable All';
+                activeColumn.classList.add('disabled');
+            }
+        }
+        
+        // Event Listeners
+        clearStackBtn.addEventListener('click', () => {
+            if (window.confirm('Are you sure you want to clear all active filters?')) {
+                activeEffects = [];
+                renderLists();
+                sendStackUpdate();
+            }
+        });
+
+        toggleAllBtn.addEventListener('click', async () => {
+            const action = effectsEnabled ? 'disable' : 'enable';
+            if (window.confirm(`Are you sure you want to ${action} all active filters?`)) {
+                try {
+                    const response = await fetch('/control/toggle_all', { method: 'POST' });
+                    const data = await response.json();
+                    effectsEnabled = data.effects_enabled;
+                    updateDisableUI();
+                } catch (error) {
+                    console.error('Failed to toggle effects:', error);
+                }
+            }
+        });
+
+        // Drag and Drop Logic
+        document.addEventListener('dragstart', (e) => {
+            if (e.target.classList.contains('filter-item') && e.target.parentElement.id === 'active-filters') {
+                draggedItem = e.target;
+                setTimeout(() => e.target.classList.add('dragging'), 0);
+            }
+        });
+
+        document.addEventListener('dragend', (e) => {
+            if (draggedItem) {
+                draggedItem.classList.remove('dragging');
+                draggedItem = null;
+                sendStackUpdate();
+            }
+        });
+
+        activeList.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            const afterElement = getDragAfterElement(activeList, e.clientY);
+            if (draggedItem) {
+                if (afterElement == null) {
+                    activeList.appendChild(draggedItem);
+                } else {
+                    activeList.insertBefore(draggedItem, afterElement);
+                }
+            }
+        });
+
+        function getDragAfterElement(container, y) {
+            const draggableElements = [...container.querySelectorAll('.filter-item:not(.dragging)')];
+            return draggableElements.reduce((closest, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && offset > closest.offset) {
+                    return { offset: offset, element: child };
+                } else {
+                    return closest;
+                }
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
+        }
+
+        document.addEventListener('DOMContentLoaded', initializeUI);
+    </script>
+</body>
+</html>
