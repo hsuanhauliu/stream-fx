@@ -3,6 +3,7 @@ import numpy as np
 import requests
 import base64
 import logging
+from typing import Dict, Any
 from ..base_filter import BaseFilter
 
 class FaceDetectionFilter(BaseFilter):
@@ -19,8 +20,16 @@ class FaceDetectionFilter(BaseFilter):
         return "Face Detection (Advanced)"
 
     def __init__(self):
-        """Initializes the filter with the server URL."""
+        """Initializes the filter with a default server URL."""
         self.server_url = "http://127.0.0.1:8000/predict"
+
+    def initialize(self, config: Dict[str, Any] = None):
+        """
+        Overrides the server URL if it's provided in the config.
+        """
+        if config and 'server_url' in config:
+            self.server_url = config['server_url']
+            logging.info(f"Face detection filter using custom server URL: {self.server_url}")
 
     def process(self, frame: np.ndarray) -> np.ndarray:
         """
@@ -50,7 +59,11 @@ class FaceDetectionFilter(BaseFilter):
                 
                 for box in bounding_boxes:
                     # Extract coordinates for each detected face.
-                    left, top, right, bottom = box['left'], box['top'], box['right'], box['bottom']
+                    left = int(box['left'])
+                    top = int(box['top'])
+                    right = int(box['right'])
+                    bottom = int(box['bottom'])
+                    
                     # Draw a green rectangle around the face.
                     cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
 
