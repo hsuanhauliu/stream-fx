@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 import numpy as np
+from typing import Dict, Any
+
 
 class BaseFilter(ABC):
     """
@@ -19,7 +21,7 @@ class BaseFilter(ABC):
         """A human-readable name for the filter (e.g., 'Sepia Tone')."""
         pass
 
-    def initialize(self):
+    def initialize(self, config: Dict[str, Any] = None):
         """
         Optional method to initialize resources when the application starts.
         This is useful for loading models or setting up detectors.

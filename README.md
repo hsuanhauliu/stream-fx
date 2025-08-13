@@ -12,7 +12,10 @@ Install and run StreamFX.
 
 ```bash
 poetry install
-poetry run python stream_fx/app.py # http://0.0.0.0:8080/video_feed
+poetry run stream-fx
+
+# see input args
+poetry run stream-fx --help
 ```
 
 Configure your OBS studio.
@@ -31,10 +34,12 @@ Once your virtual camera is started, the processed video frames should be visibl
 
 To stop the video feed, simply stop the StreamFX program.
 
-### Program Settings
+### Settings
 
-WIP
+The program takes in a YAML format config file to easily configure the app. See [example](./example_config.yaml).
 
-### Rea-Time Controls
+### Control Panel
 
-WIP
+StreamFX includes a lightweight web UI control panel.
+
+Default URL: <http://127.0.0.1:8080/>

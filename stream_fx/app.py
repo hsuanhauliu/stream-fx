@@ -8,11 +8,12 @@ import logging
 import io
 import threading
 import uvicorn
+import yaml
 from fastapi import FastAPI
 from starlette.responses import StreamingResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from typing import List, Dict
+from typing import List, Dict, Any
 import os
 import importlib
 from queue import Queue
@@ -68,7 +69,7 @@ class CameraThread(threading.Thread):
         self.running = False
 
 # --- Plugin Loading ---
-def load_plugins_from_directory(directory: str, module_prefix: str) -> Dict[str, BaseFilter]:
+def load_plugins_from_directory(directory: str, module_prefix: str, config: Dict[str, Any]) -> Dict[str, BaseFilter]:
     """Helper function to load plugins from a specific directory."""
     plugins = {}
     if not os.path.isdir(directory):
@@ -84,7 +85,9 @@ def load_plugins_from_directory(directory: str, module_prefix: str) -> Dict[str,
                     item = getattr(module, item_name)
                     if isinstance(item, type) and issubclass(item, BaseFilter) and item is not BaseFilter:
                         plugin_instance = item()
-                        plugin_instance.initialize()
+                        # Pass the specific config for this plugin to its initializer
+                        plugin_config = config.get('filters', {}).get(plugin_instance.identifier)
+                        plugin_instance.initialize(plugin_config)
                         plugins[plugin_instance.identifier] = plugin_instance
                         logging.info(f"Successfully loaded plugin: '{plugin_instance.name}' ({plugin_instance.identifier})")
             except (ImportError, ModuleNotFoundError) as e:
@@ -93,24 +96,39 @@ def load_plugins_from_directory(directory: str, module_prefix: str) -> Dict[str,
                 logging.error(f"An unexpected error occurred while loading plugin from {filename}: {e}")
     return plugins
 
-def load_all_plugins(enable_advanced: bool) -> Dict[str, BaseFilter]:
+def load_all_plugins(enable_advanced: bool, config: Dict[str, Any]) -> Dict[str, BaseFilter]:
     """Dynamically loads all filter plugins."""
     all_plugins = {}
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
     # Load standard filters
     filters_dir_path = os.path.join(script_dir, "filters")
-    all_plugins.update(load_plugins_from_directory(filters_dir_path, "filters"))
+    all_plugins.update(load_plugins_from_directory(filters_dir_path, "filters", config))
 
     # Conditionally load advanced filters
     if enable_advanced:
         logging.info("Advanced filters enabled. Loading...")
         advanced_filters_dir_path = os.path.join(filters_dir_path, "advanced")
-        all_plugins.update(load_plugins_from_directory(advanced_filters_dir_path, "filters.advanced"))
+        all_plugins.update(load_plugins_from_directory(advanced_filters_dir_path, "filters.advanced", config))
     else:
         logging.info("Advanced filters disabled. To enable, use the --enable_advanced_filters flag.")
         
     return all_plugins
+
+def load_config(config_path: str) -> Dict[str, Any]:
+    """Loads and parses the YAML configuration file."""
+    if config_path:
+        try:
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+                logging.info(f"Successfully loaded configuration from {config_path}")
+                return config if config is not None else {}
+        except FileNotFoundError:
+            logging.error(f"Configuration file not found at {config_path}. Using defaults.")
+        except yaml.YAMLError as e:
+            logging.error(f"Error parsing YAML configuration file: {e}. Using defaults.")
+    return {}
+
 
 # --- FastAPI App and Global variables ---
 app = FastAPI()
@@ -222,18 +240,25 @@ def parse_arguments():
         action='store_true',
         help='Enable debug mode to visualize frames and set logging to DEBUG level.'
     )
-    parser.add_argument('--host', type=str, default='127.0.0.1', help='Host for the streaming server.')
-    parser.add_argument('--port', type=int, default=8080, help='Port for the streaming server.')
+    # Set defaults to None to distinguish between user-set and default values
+    parser.add_argument('--host', type=str, default=None, help='Host for the streaming server.')
+    parser.add_argument('--port', type=int, default=None, help='Port for the streaming server.')
     parser.add_argument(
         '--camera',
         type=int,
-        default=0,
+        default=None,
         help='Index of the camera to use (e.g., 0, 1, 2).'
     )
     parser.add_argument(
         '--enable_advanced_filters',
         action='store_true',
         help='Enable loading of advanced filters from the filters/advanced directory.'
+    )
+    parser.add_argument(
+        '--config',
+        type=str,
+        default=None,
+        help='Path to the YAML configuration file.'
     )
     return parser.parse_args()
 
@@ -256,24 +281,31 @@ def main():
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s')
 
-    # Load plugins based on the command-line argument
-    loaded_plugins = load_all_plugins(args.enable_advanced_filters)
+    # Load configuration and then plugins
+    config = load_config(args.config)
+    loaded_plugins = load_all_plugins(args.enable_advanced_filters, config)
+
+    # Determine final settings with precedence: CLI > config > default
+    app_config = config.get('app', {})
+    host = args.host if args.host is not None else app_config.get('host', '127.0.0.1')
+    port = args.port if args.port is not None else app_config.get('port', 8080)
+    camera_index = args.camera if args.camera is not None else app_config.get('camera', 0)
 
     signal.signal(signal.SIGINT, signal_handler)
     
     # --- FastAPI Server Thread ---
-    config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
-    server = uvicorn.Server(config)
+    uvicorn_config = uvicorn.Config(app, host=host, port=port, log_level="info")
+    server = uvicorn.Server(uvicorn_config)
     server_thread = threading.Thread(target=server.run)
     server_thread.daemon = True
     server_thread.start()
-    logging.info(f"Streaming server started at http://{args.host}:{args.port}/video_feed")
-    logging.info(f"Control UI available at http://{args.host}:{args.port}/")
+    logging.info(f"Streaming server started at http://{host}:{port}/video_feed")
+    logging.info(f"Control UI available at http://{host}:{port}/")
 
     # --- Camera and Processing Thread ---
     # A queue of size 1 will always hold the latest frame
     frame_queue = Queue(maxsize=1)
-    camera_thread = CameraThread(args.camera, frame_queue)
+    camera_thread = CameraThread(camera_index, frame_queue)
     camera_thread.start()
 
     try:
@@ -326,4 +358,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

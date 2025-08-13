@@ -1,0 +1,16 @@
+# StreamFX Configuration File
+
+# Main application settings
+app:
+  host: "127.0.0.1"
+  port: 8080
+  camera: 0
+
+filters:
+  face_detection:
+    # Overrides the default URL for the face detection inference server.
+    server_url: "http://127.0.0.1:8000/predict"
+
+  # Example for a hypothetical sepia filter that might need a parameter.
+  # sepia_tone:
+  #   intensity: 0.85

@@ -44,16 +44,13 @@ class FaceDetectionFilter(BaseFilter):
             data = response.json()
             
             # 6. Check for bounding boxes and draw them on the frame.
+            # The API returns a list of results for each image; we sent one image.
             if "bounding_boxes" in data and len(data["bounding_boxes"]) > 0:
                 bounding_boxes = data["bounding_boxes"][0]
                 
                 for box in bounding_boxes:
-                    # --- FIX: Cast coordinates to integers ---
-                    left = int(box['left'])
-                    top = int(box['top'])
-                    right = int(box['right'])
-                    bottom = int(box['bottom'])
-                    
+                    # Extract coordinates for each detected face.
+                    left, top, right, bottom = box['left'], box['top'], box['right'], box['bottom']
                     # Draw a green rectangle around the face.
                     cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
 
