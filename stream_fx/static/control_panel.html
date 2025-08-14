@@ -14,11 +14,15 @@
         .column.disabled { opacity: 0.5; pointer-events: none; background-color: #f0f2f5; }
         h2 { font-size: 1.2em; color: #606770; border-bottom: 1px solid #ddd; padding-bottom: 10px; margin-top: 0; }
         .filter-list { min-height: 200px; list-style-type: none; padding: 0; }
-        .filter-item { background-color: #e4e6eb; color: #050505; padding: 10px; margin-bottom: 8px; border-radius: 6px; cursor: grab; user-select: none; display: flex; justify-content: space-between; align-items: center; }
+        .filter-item { background-color: #e4e6eb; color: #050505; padding: 10px; margin-bottom: 8px; border-radius: 6px; cursor: grab; user-select: none; }
+        .filter-item-header { display: flex; justify-content: space-between; align-items: center; }
         .filter-item:active { cursor: grabbing; }
         .remove-btn { cursor: pointer; color: #606770; font-weight: bold; padding: 0 5px; }
         .dragging { opacity: 0.5; }
         .small-btn { font-size: 0.8em; padding: 6px 10px; cursor: pointer; background-color: #ddd; border: none; border-radius: 4px; }
+        .param-controls { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ccc; font-size: 0.9em; }
+        .param-controls label { display: block; margin-bottom: 5px; }
+        .param-controls input[type="range"] { width: 100%; }
     </style>
 </head>
 <body>
@@ -51,6 +55,7 @@
         let availableFilters = [];
         let activeEffects = [];
         let effectsEnabled = true;
+        let parameterValues = {};
         let draggedItem = null;
 
         async function sendStackUpdate() {
@@ -63,6 +68,18 @@
                 });
             } catch (error) {
                 console.error('Failed to update stack:', error);
+            }
+        }
+
+        async function sendParameterUpdate(filterId, paramId, value) {
+            try {
+                await fetch('/control/update_parameter', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filter_id: filterId, params: { [paramId]: value } })
+                });
+            } catch (error) {
+                console.error(`Failed to update parameter ${paramId} for ${filterId}:`, error);
             }
         }
 
@@ -92,7 +109,10 @@
             li.className = 'filter-item';
             li.dataset.identifier = filter.identifier;
             li.draggable = true;
-            li.textContent = filter.name;
+
+            const header = document.createElement('div');
+            header.className = 'filter-item-header';
+            header.textContent = filter.name;
             
             if (isActive) {
                 const removeBtn = document.createElement('span');
@@ -104,8 +124,44 @@
                     renderLists();
                     sendStackUpdate();
                 };
-                li.appendChild(removeBtn);
+                header.appendChild(removeBtn);
+                li.appendChild(header);
+
+                // Add parameter controls if any
+                if (filter.parameters && filter.parameters.length > 0) {
+                    const controlsDiv = document.createElement('div');
+                    controlsDiv.className = 'param-controls';
+                    filter.parameters.forEach(param => {
+                        const currentVal = (parameterValues[filter.identifier] && parameterValues[filter.identifier][param.identifier] !== undefined)
+                            ? parameterValues[filter.identifier][param.identifier]
+                            : param.default;
+
+                        const label = document.createElement('label');
+                        label.textContent = `${param.name}: `;
+                        const valueSpan = document.createElement('span');
+                        valueSpan.textContent = currentVal;
+                        label.appendChild(valueSpan);
+                        
+                        if (param.type === 'slider') {
+                            const slider = document.createElement('input');
+                            slider.type = 'range';
+                            slider.min = param.min;
+                            slider.max = param.max;
+                            slider.step = param.step;
+                            slider.value = currentVal;
+                            slider.oninput = (e) => {
+                                valueSpan.textContent = e.target.value;
+                                sendParameterUpdate(filter.identifier, param.identifier, e.target.value);
+                            };
+                            controlsDiv.appendChild(label);
+                            controlsDiv.appendChild(slider);
+                        }
+                    });
+                    li.appendChild(controlsDiv);
+                }
+
             } else {
+                li.appendChild(header);
                 li.onclick = () => {
                     activeEffects.push(filter.identifier);
                     renderLists();
@@ -122,6 +178,7 @@
                 availableFilters = data.available_filters;
                 activeEffects = data.active_effects;
                 effectsEnabled = data.effects_enabled;
+                parameterValues = data.parameter_values;
                 
                 updateDisableUI();
                 renderLists();

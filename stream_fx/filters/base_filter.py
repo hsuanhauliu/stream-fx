@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 import numpy as np
-from typing import Dict, Any
-
+from typing import Dict, Any, List
 
 class BaseFilter(ABC):
     """
@@ -21,11 +20,24 @@ class BaseFilter(ABC):
         """A human-readable name for the filter (e.g., 'Sepia Tone')."""
         pass
 
+    def get_parameters(self) -> List[Dict[str, Any]]:
+        """
+        Returns a list of dictionaries, each defining a configurable parameter.
+        This allows the UI to dynamically generate controls.
+        """
+        return []
+
+    def update_parameters(self, params: Dict[str, Any]):
+        """
+        Receives a dictionary of updated parameter values from the UI.
+        The filter is responsible for updating its internal state.
+        """
+        pass
+
     def initialize(self, config: Dict[str, Any] = None):
         """
         Optional method to initialize resources when the application starts.
         This is useful for loading models or setting up detectors.
-        By default, it does nothing.
         """
         pass
 

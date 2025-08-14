@@ -138,22 +138,38 @@ lock = threading.Lock()
 # --- Global State Management ---
 state = {
     "active_effects": [], # A list of effect identifiers, defining the stack
-    "effects_enabled": True # Master toggle for the entire stack
+    "effects_enabled": True, # Master toggle for the entire stack
+    "parameter_values": {} # Stores current values for filter parameters
 }
 state_lock = threading.Lock()
 
 # --- API Models ---
+class ParameterInfo(BaseModel):
+    identifier: str
+    name: str
+    type: str
+    min: float | None = None
+    max: float | None = None
+    step: float | None = None
+    default: Any
+
 class FilterInfo(BaseModel):
     identifier: str
     name: str
+    parameters: List[ParameterInfo]
 
 class ControlStatus(BaseModel):
     active_effects: List[str]
     available_filters: List[FilterInfo]
     effects_enabled: bool
+    parameter_values: Dict[str, Dict[str, Any]]
 
 class SetStackRequest(BaseModel):
     effects: List[str] = Field(..., description="An ordered list of effect identifiers.")
+
+class UpdateParameterRequest(BaseModel):
+    filter_id: str
+    params: Dict[str, Any]
 
 
 # --- Video Streaming Endpoint ---
@@ -182,20 +198,25 @@ async def video_feed():
 async def get_status():
     """Returns the list of available filters and the active stack status."""
     with state_lock:
-        active_effects = state["active_effects"]
+        active_effects = list(state["active_effects"])
         effects_enabled = state["effects_enabled"]
+        param_values = dict(state["parameter_values"])
     
     available = [
-        {"identifier": plugin.identifier, "name": plugin.name}
+        {"identifier": plugin.identifier, "name": plugin.name, "parameters": plugin.get_parameters()}
         for plugin in loaded_plugins.values()
     ]
-    return {"active_effects": active_effects, "available_filters": available, "effects_enabled": effects_enabled}
+    return {
+        "active_effects": active_effects, 
+        "available_filters": available, 
+        "effects_enabled": effects_enabled,
+        "parameter_values": param_values
+    }
 
 @app.post("/control/set_stack", response_model=Dict)
 async def set_stack(request: SetStackRequest):
     """Sets the active filter stack to a new configuration."""
     with state_lock:
-        # Validate that all requested effects are valid plugins
         valid_effects = [eff for eff in request.effects if eff in loaded_plugins]
         state["active_effects"] = valid_effects
         logging.info(f"Filter stack updated via API: {valid_effects}")
@@ -208,6 +229,24 @@ async def toggle_all_effects():
         state["effects_enabled"] = not state["effects_enabled"]
         logging.info(f"All effects toggled via API. Enabled: {state['effects_enabled']}")
         return {"status": "success", "effects_enabled": state["effects_enabled"]}
+
+@app.post("/control/update_parameter", response_model=Dict)
+async def update_parameter(request: UpdateParameterRequest):
+    """Updates a specific parameter for a filter."""
+    with state_lock:
+        if request.filter_id in loaded_plugins:
+            plugin = loaded_plugins[request.filter_id]
+            plugin.update_parameters(request.params)
+            
+            # Update the central state
+            if request.filter_id not in state["parameter_values"]:
+                state["parameter_values"][request.filter_id] = {}
+            state["parameter_values"][request.filter_id].update(request.params)
+
+            logging.info(f"Updated parameters for '{request.filter_id}': {request.params}")
+            return {"status": "success"}
+        return {"status": "error", "message": "Filter not found"}
+
 
 # --- Web UI Endpoint ---
 @app.get("/", response_class=HTMLResponse)
@@ -240,9 +279,8 @@ def parse_arguments():
         action='store_true',
         help='Enable debug mode to visualize frames and set logging to DEBUG level.'
     )
-    # Set defaults to None to distinguish between user-set and default values
-    parser.add_argument('--host', type=str, default=None, help='Host for the streaming server.')
-    parser.add_argument('--port', type=int, default=None, help='Port for the streaming server.')
+    parser.add_argument('--host', type=str, default='127.0.0.1', help='Host for the streaming server.')
+    parser.add_argument('--port', type=int, default=8080, help='Port for the streaming server.')
     parser.add_argument(
         '--camera',
         type=int,
@@ -284,6 +322,14 @@ def main():
     # Load configuration and then plugins
     config = load_config(args.config)
     loaded_plugins = load_all_plugins(args.enable_advanced_filters, config)
+
+    # Initialize parameter values in the global state
+    with state_lock:
+        for plugin_id, plugin in loaded_plugins.items():
+            state["parameter_values"][plugin_id] = {}
+            for param in plugin.get_parameters():
+                state["parameter_values"][plugin_id][param["identifier"]] = param["default"]
+
 
     # Determine final settings with precedence: CLI > config > default
     app_config = config.get('app', {})
