@@ -229,18 +229,35 @@ async def get_status():
 async def set_stack(request: SetStackRequest):
     """Sets the active filter stack to a new configuration."""
     with state_lock:
-        valid_effects = [eff for eff in request.effects if eff in loaded_plugins]
-        state["active_effects"] = valid_effects
-        logging.info(f"Filter stack updated via API: {valid_effects}")
-        return {"status": "success", "active_effects": valid_effects}
+        old_stack = set(state["active_effects"])
+        new_stack_list = [eff for eff in request.effects if eff in loaded_plugins]
+        new_stack = set(new_stack_list)
+
+        # Call on_deactivate for filters that were removed from the stack
+        removed_filters = old_stack - new_stack
+        for filter_id in removed_filters:
+            if filter_id in loaded_plugins:
+                loaded_plugins[filter_id].on_deactivate()
+
+        state["active_effects"] = new_stack_list
+        logging.info(f"Filter stack updated via API: {new_stack_list}")
+        return {"status": "success", "active_effects": new_stack_list}
 
 @app.post("/control/toggle_all", response_model=Dict)
 async def toggle_all_effects():
     """Toggles the entire filter stack on or off (disable)."""
     with state_lock:
         state["effects_enabled"] = not state["effects_enabled"]
-        logging.info(f"All effects toggled via API. Enabled: {state['effects_enabled']}")
-        return {"status": "success", "effects_enabled": state["effects_enabled"]}
+        is_enabled = state["effects_enabled"]
+        logging.info(f"All effects toggled via API. Enabled: {is_enabled}")
+
+        # If effects are being disabled, call on_deactivate for all active filters
+        if not is_enabled:
+            for effect_id in state["active_effects"]:
+                if effect_id in loaded_plugins:
+                    loaded_plugins[effect_id].on_deactivate()
+
+        return {"status": "success", "effects_enabled": is_enabled}
 
 @app.post("/control/update_parameter", response_model=Dict)
 async def update_parameter(request: UpdateParameterRequest):
@@ -291,7 +308,7 @@ def parse_arguments():
         action='store_true',
         help='Enable debug mode to visualize frames and set logging to DEBUG level.'
     )
-    parser.add_argument('--host', type=str, default=None, help='Host for the streaming server.')
+    parser.add_argument('--host', type=str, default='127.0.0.1', help='Host for the streaming server.')
     parser.add_argument('--port', type=int, default=None, help='Port for the streaming server.')
     parser.add_argument(
         '--camera',

@@ -48,6 +48,13 @@ class BaseFilter(ABC):
         This is useful for loading models or setting up detectors.
         """
         pass
+    
+    def on_deactivate(self):
+        """
+        Called when the filter is removed from the active stack or disabled.
+        Useful for cleaning up resources like network connections.
+        """
+        pass
 
     @abstractmethod
     def process(self, frame: np.ndarray) -> Optional[np.ndarray]:
