@@ -13,6 +13,10 @@ class FlipHorizontalFilter(BaseFilter):
     def name(self) -> str:
         return "Flip Horizontal"
 
+    @property
+    def category(self) -> str:
+        return "Basic"
+
     def process(self, frame: np.ndarray) -> np.ndarray:
         """Flips the frame horizontally."""
         return cv2.flip(frame, 1)

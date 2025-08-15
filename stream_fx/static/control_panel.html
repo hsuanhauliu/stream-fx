@@ -13,6 +13,7 @@
         .column { flex: 1; background-color: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: opacity 0.3s; }
         .column.disabled { opacity: 0.5; pointer-events: none; background-color: #f0f2f5; }
         h2 { font-size: 1.2em; color: #606770; border-bottom: 1px solid #ddd; padding-bottom: 10px; margin-top: 0; }
+        h3 { font-size: 1em; color: #606770; margin-top: 20px; margin-bottom: 10px; }
         .filter-list { min-height: 200px; list-style-type: none; padding: 0; }
         .filter-item { background-color: #e4e6eb; color: #050505; padding: 10px; margin-bottom: 8px; border-radius: 6px; cursor: grab; user-select: none; }
         .filter-item-header { display: flex; justify-content: space-between; align-items: center; }
@@ -37,7 +38,7 @@
         <div class="columns" id="columns-container">
             <div class="column" id="available-column">
                 <h2>Available Filters</h2>
-                <ul id="available-filters" class="filter-list"></ul>
+                <div id="available-filters-container"></div>
             </div>
             <div class="column" id="active-column">
                 <h2>Active Filter Stack</h2>
@@ -46,13 +47,14 @@
         </div>
     </div>
     <script>
-        const availableList = document.getElementById('available-filters');
+        const availableContainer = document.getElementById('available-filters-container');
         const activeList = document.getElementById('active-filters');
         const clearStackBtn = document.getElementById('clear-stack-btn');
         const toggleAllBtn = document.getElementById('toggle-all-btn');
         const activeColumn = document.getElementById('active-column');
         
-        let availableFilters = [];
+        let availableFiltersByCategory = {};
+        let allFiltersFlat = [];
         let activeEffects = [];
         let effectsEnabled = true;
         let parameterValues = {};
@@ -61,11 +63,14 @@
         async function sendStackUpdate() {
             const newStack = Array.from(activeList.children).map(item => item.dataset.identifier);
             try {
-                await fetch('/control/set_stack', {
+                const response = await fetch('/control/set_stack', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ effects: newStack })
                 });
+                const data = await response.json();
+                activeEffects = data.active_effects;
+                renderLists();
             } catch (error) {
                 console.error('Failed to update stack:', error);
             }
@@ -84,19 +89,33 @@
         }
 
         function renderLists() {
-            availableList.innerHTML = '';
+            availableContainer.innerHTML = '';
             activeList.innerHTML = '';
 
             const activeSet = new Set(activeEffects);
-            availableFilters.forEach(filter => {
-                if (!activeSet.has(filter.identifier)) {
-                    const li = createFilterItem(filter, false);
-                    availableList.appendChild(li);
-                }
-            });
 
+            // Render available filters grouped by category
+            for (const category in availableFiltersByCategory) {
+                const categoryHeader = document.createElement('h3');
+                categoryHeader.textContent = category;
+                availableContainer.appendChild(categoryHeader);
+
+                const categoryList = document.createElement('ul');
+                categoryList.className = 'filter-list';
+                categoryList.style.minHeight = 'auto'; // override default min-height
+                
+                availableFiltersByCategory[category].forEach(filter => {
+                    if (!activeSet.has(filter.identifier)) {
+                        const li = createFilterItem(filter, false);
+                        categoryList.appendChild(li);
+                    }
+                });
+                availableContainer.appendChild(categoryList);
+            }
+
+            // Render active filters
             activeEffects.forEach(effectId => {
-                const filter = availableFilters.find(f => f.identifier === effectId);
+                const filter = allFiltersFlat.find(f => f.identifier === effectId);
                 if (filter) {
                     const li = createFilterItem(filter, true);
                     activeList.appendChild(li);
@@ -171,17 +190,38 @@
             return li;
         }
 
+        async function pollStatus() {
+            try {
+                const response = await fetch('/control/status');
+                const data = await response.json();
+                
+                // Only re-render if the state has actually changed
+                if (JSON.stringify(activeEffects) !== JSON.stringify(data.active_effects) || effectsEnabled !== data.effects_enabled) {
+                    activeEffects = data.active_effects;
+                    effectsEnabled = data.effects_enabled;
+                    updateDisableUI();
+                    renderLists();
+                }
+            } catch (error) {
+                console.error('Polling failed:', error);
+            }
+        }
+
         async function initializeUI() {
             try {
                 const response = await fetch('/control/status');
                 const data = await response.json();
-                availableFilters = data.available_filters;
+                availableFiltersByCategory = data.available_filters_by_category;
+                allFiltersFlat = Object.values(availableFiltersByCategory).flat();
                 activeEffects = data.active_effects;
                 effectsEnabled = data.effects_enabled;
                 parameterValues = data.parameter_values;
                 
                 updateDisableUI();
                 renderLists();
+
+                // Start polling for updates every 2 seconds
+                setInterval(pollStatus, 2000);
             } catch (error) {
                 console.error('Failed to initialize UI:', error);
             }

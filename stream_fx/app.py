@@ -16,7 +16,9 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Any
 import os
 import importlib
+import inspect
 from queue import Queue
+from collections import defaultdict
 
 # --- FIX: Modify sys.path BEFORE attempting to import from the filters module ---
 # This ensures that the 'filters' directory is recognized as a package.
@@ -83,7 +85,8 @@ def load_plugins_from_directory(directory: str, module_prefix: str, config: Dict
                 module = importlib.import_module(module_name)
                 for item_name in dir(module):
                     item = getattr(module, item_name)
-                    if isinstance(item, type) and issubclass(item, BaseFilter) and item is not BaseFilter:
+                    # Check if the item is a class, a subclass of BaseFilter, and not an abstract class
+                    if isinstance(item, type) and issubclass(item, BaseFilter) and not inspect.isabstract(item):
                         plugin_instance = item()
                         # Pass the specific config for this plugin to its initializer
                         plugin_config = config.get('filters', {}).get(plugin_instance.identifier)
@@ -156,11 +159,12 @@ class ParameterInfo(BaseModel):
 class FilterInfo(BaseModel):
     identifier: str
     name: str
+    category: str
     parameters: List[ParameterInfo]
 
 class ControlStatus(BaseModel):
     active_effects: List[str]
-    available_filters: List[FilterInfo]
+    available_filters_by_category: Dict[str, List[FilterInfo]]
     effects_enabled: bool
     parameter_values: Dict[str, Dict[str, Any]]
 
@@ -202,13 +206,20 @@ async def get_status():
         effects_enabled = state["effects_enabled"]
         param_values = dict(state["parameter_values"])
     
-    available = [
-        {"identifier": plugin.identifier, "name": plugin.name, "parameters": plugin.get_parameters()}
-        for plugin in loaded_plugins.values()
-    ]
+    # Group available filters by category
+    available_by_category = defaultdict(list)
+    for plugin in loaded_plugins.values():
+        info = {
+            "identifier": plugin.identifier, 
+            "name": plugin.name, 
+            "category": plugin.category,
+            "parameters": plugin.get_parameters()
+        }
+        available_by_category[plugin.category].append(info)
+
     return {
         "active_effects": active_effects, 
-        "available_filters": available, 
+        "available_filters_by_category": available_by_category, 
         "effects_enabled": effects_enabled,
         "parameter_values": param_values
     }
@@ -279,8 +290,8 @@ def parse_arguments():
         action='store_true',
         help='Enable debug mode to visualize frames and set logging to DEBUG level.'
     )
-    parser.add_argument('--host', type=str, default='127.0.0.1', help='Host for the streaming server.')
-    parser.add_argument('--port', type=int, default=8080, help='Port for the streaming server.')
+    parser.add_argument('--host', type=str, default=None, help='Host for the streaming server.')
+    parser.add_argument('--port', type=int, default=None, help='Port for the streaming server.')
     parser.add_argument(
         '--camera',
         type=int,
@@ -367,16 +378,30 @@ def main():
                 continue
 
             with state_lock:
-                active_stack = state["active_effects"]
+                active_stack = list(state["active_effects"])
                 is_effects_enabled = state["effects_enabled"]
 
             processed_frame = frame
+            effects_to_remove = []
+
             # Apply the stack of filters in order, if enabled
             if is_effects_enabled:
                 for effect_id in active_stack:
                     if effect_id in loaded_plugins:
-                        processed_frame = loaded_plugins[effect_id].process(processed_frame)
+                        result_frame = loaded_plugins[effect_id].process(processed_frame)
+                        
+                        if result_frame is None:
+                            # The filter has signaled that it's finished
+                            effects_to_remove.append(effect_id)
+                        else:
+                            processed_frame = result_frame
             
+            # If any filters need to be removed, update the state
+            if effects_to_remove:
+                with state_lock:
+                    state["active_effects"] = [eff for eff in state["active_effects"] if eff not in effects_to_remove]
+                logging.info(f"Auto-removed finished filters: {effects_to_remove}")
+
             with lock:
                 output_frame = processed_frame.copy()
 

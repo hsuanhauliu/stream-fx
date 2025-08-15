@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import numpy as np
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 class BaseFilter(ABC):
     """
@@ -19,6 +19,14 @@ class BaseFilter(ABC):
     def name(self) -> str:
         """A human-readable name for the filter (e.g., 'Sepia Tone')."""
         pass
+
+    @property
+    def category(self) -> str:
+        """
+        A string defining the category for UI grouping (e.g., 'Artistic', 'Utility').
+        If not implemented, it will default to a generic category.
+        """
+        return "General"
 
     def get_parameters(self) -> List[Dict[str, Any]]:
         """
@@ -42,9 +50,10 @@ class BaseFilter(ABC):
         pass
 
     @abstractmethod
-    def process(self, frame: np.ndarray) -> np.ndarray:
+    def process(self, frame: np.ndarray) -> Optional[np.ndarray]:
         """
         Process a single video frame and return the modified frame.
-        This method must be implemented by all plugins.
+        If the filter is temporary and its effect is finished, it can
+        return None to signal its removal from the active stack.
         """
         pass

@@ -3,7 +3,7 @@ import numpy as np
 import requests
 import base64
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from ..base_filter import BaseFilter
 
 class FaceDetectionFilter(BaseFilter):
@@ -20,8 +20,10 @@ class FaceDetectionFilter(BaseFilter):
         return "Face Detection (Advanced)"
 
     def __init__(self):
-        """Initializes the filter with a default server URL."""
+        """Initializes the filter with a default server URL and failure counter."""
         self.server_url = "http://127.0.0.1:8000/predict"
+        self.failure_count = 0
+        self.max_failures = 5
 
     def initialize(self, config: Dict[str, Any] = None):
         """
@@ -31,9 +33,10 @@ class FaceDetectionFilter(BaseFilter):
             self.server_url = config['server_url']
             logging.info(f"Face detection filter using custom server URL: {self.server_url}")
 
-    def process(self, frame: np.ndarray) -> np.ndarray:
+    def process(self, frame: np.ndarray) -> Optional[np.ndarray]:
         """
         Encodes the frame, sends it to the inference server, and draws bounding boxes.
+        If it fails consecutively, it will disable itself.
         """
         # 1. Encode the frame to a JPEG format in memory.
         _, buffer = cv2.imencode('.jpg', frame)
@@ -49,11 +52,13 @@ class FaceDetectionFilter(BaseFilter):
             response = requests.post(self.server_url, json=payload, timeout=0.5)
             response.raise_for_status() # Raise an exception for HTTP error codes.
 
+            # Reset failure count on a successful request.
+            self.failure_count = 0
+
             # 5. Parse the JSON response from the server.
             data = response.json()
             
             # 6. Check for bounding boxes and draw them on the frame.
-            # The API returns a list of results for each image; we sent one image.
             if "bounding_boxes" in data and len(data["bounding_boxes"]) > 0:
                 bounding_boxes = data["bounding_boxes"][0]
                 
@@ -68,12 +73,17 @@ class FaceDetectionFilter(BaseFilter):
                     cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
 
         except requests.exceptions.RequestException as e:
-            # If the server is down or the request fails, log a debug message
-            # and return the original frame without crashing the application.
-            logging.debug(f"Face detection server request failed: {e}")
+            self.failure_count += 1
+            logging.debug(f"Face detection server request failed ({self.failure_count}/{self.max_failures}): {e}")
         
         except Exception as e:
-            # Catch any other unexpected errors during processing.
-            logging.error(f"An error occurred in the face detection filter: {e}")
+            self.failure_count += 1
+            logging.error(f"An error occurred in the face detection filter ({self.failure_count}/{self.max_failures}): {e}")
+
+        # Check if the failure limit has been reached.
+        if self.failure_count >= self.max_failures:
+            logging.warning(f"Face detection filter failed {self.max_failures} consecutive times. Disabling.")
+            self.failure_count = 0 # Reset for next time it's enabled
+            return None # Signal to the main loop to remove this filter.
 
         return frame
