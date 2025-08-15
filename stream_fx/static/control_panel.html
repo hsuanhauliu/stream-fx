@@ -23,7 +23,7 @@
         .small-btn { font-size: 0.8em; padding: 6px 10px; cursor: pointer; background-color: #ddd; border: none; border-radius: 4px; }
         .param-controls { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ccc; font-size: 0.9em; }
         .param-controls label { display: block; margin-bottom: 5px; }
-        .param-controls input[type="range"] { width: 100%; }
+        .param-controls input[type="range"], .param-controls select { width: 100%; box-sizing: border-box; padding: 5px; }
     </style>
 </head>
 <body>
@@ -94,7 +94,7 @@
 
             const activeSet = new Set(activeEffects);
 
-            // Render available filters grouped by category
+            // Render available filters
             for (const category in availableFiltersByCategory) {
                 const categoryHeader = document.createElement('h3');
                 categoryHeader.textContent = category;
@@ -102,7 +102,7 @@
 
                 const categoryList = document.createElement('ul');
                 categoryList.className = 'filter-list';
-                categoryList.style.minHeight = 'auto'; // override default min-height
+                categoryList.style.minHeight = 'auto';
                 
                 availableFiltersByCategory[category].forEach(filter => {
                     if (!activeSet.has(filter.identifier)) {
@@ -146,7 +146,7 @@
                 header.appendChild(removeBtn);
                 li.appendChild(header);
 
-                // Add parameter controls if any
+                // Add parameter controls
                 if (filter.parameters && filter.parameters.length > 0) {
                     const controlsDiv = document.createElement('div');
                     controlsDiv.className = 'param-controls';
@@ -157,11 +157,12 @@
 
                         const label = document.createElement('label');
                         label.textContent = `${param.name}: `;
-                        const valueSpan = document.createElement('span');
-                        valueSpan.textContent = currentVal;
-                        label.appendChild(valueSpan);
                         
                         if (param.type === 'slider') {
+                            const valueSpan = document.createElement('span');
+                            valueSpan.textContent = currentVal;
+                            label.appendChild(valueSpan);
+
                             const slider = document.createElement('input');
                             slider.type = 'range';
                             slider.min = param.min;
@@ -174,6 +175,22 @@
                             };
                             controlsDiv.appendChild(label);
                             controlsDiv.appendChild(slider);
+                        } else if (param.type === 'select') {
+                            const select = document.createElement('select');
+                            param.options.forEach(option => {
+                                const opt = document.createElement('option');
+                                opt.value = option;
+                                opt.textContent = option;
+                                if (option === currentVal) {
+                                    opt.selected = true;
+                                }
+                                select.appendChild(opt);
+                            });
+                            select.onchange = (e) => {
+                                sendParameterUpdate(filter.identifier, param.identifier, e.target.value);
+                            };
+                            controlsDiv.appendChild(label);
+                            controlsDiv.appendChild(select);
                         }
                     });
                     li.appendChild(controlsDiv);
@@ -195,7 +212,6 @@
                 const response = await fetch('/control/status');
                 const data = await response.json();
                 
-                // Only re-render if the state has actually changed
                 if (JSON.stringify(activeEffects) !== JSON.stringify(data.active_effects) || effectsEnabled !== data.effects_enabled) {
                     activeEffects = data.active_effects;
                     effectsEnabled = data.effects_enabled;
@@ -220,7 +236,6 @@
                 updateDisableUI();
                 renderLists();
 
-                // Start polling for updates every 2 seconds
                 setInterval(pollStatus, 2000);
             } catch (error) {
                 console.error('Failed to initialize UI:', error);

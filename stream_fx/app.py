@@ -155,6 +155,7 @@ class ParameterInfo(BaseModel):
     max: float | None = None
     step: float | None = None
     default: Any
+    options: List[str] | None = None # For select type
 
 class FilterInfo(BaseModel):
     identifier: str

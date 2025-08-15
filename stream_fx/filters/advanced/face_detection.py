@@ -3,7 +3,7 @@ import numpy as np
 import requests
 import base64
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from ..base_filter import BaseFilter
 
 class FaceDetectionFilter(BaseFilter):
@@ -19,6 +19,10 @@ class FaceDetectionFilter(BaseFilter):
     def name(self) -> str:
         return "Face Detection (Advanced)"
 
+    @property
+    def category(self) -> str:
+        return "Face Effect"
+
     def __init__(self):
         """Initializes the filter with a default server URL and failure counter."""
         self.server_url = "http://127.0.0.1:8000/predict"
@@ -33,10 +37,10 @@ class FaceDetectionFilter(BaseFilter):
             self.server_url = config['server_url']
             logging.info(f"Face detection filter using custom server URL: {self.server_url}")
 
-    def process(self, frame: np.ndarray) -> Optional[np.ndarray]:
+    def _detect_faces(self, frame: np.ndarray) -> Optional[List[Dict[str, int]]]:
         """
-        Encodes the frame, sends it to the inference server, and draws bounding boxes.
-        If it fails consecutively, it will disable itself.
+        Calls the inference server to detect faces and returns a list of bounding boxes.
+        Returns None on failure.
         """
         # 1. Encode the frame to a JPEG format in memory.
         _, buffer = cv2.imencode('.jpg', frame)
@@ -58,19 +62,9 @@ class FaceDetectionFilter(BaseFilter):
             # 5. Parse the JSON response from the server.
             data = response.json()
             
-            # 6. Check for bounding boxes and draw them on the frame.
+            # 6. Return the bounding boxes if they exist.
             if "bounding_boxes" in data and len(data["bounding_boxes"]) > 0:
-                bounding_boxes = data["bounding_boxes"][0]
-                
-                for box in bounding_boxes:
-                    # Extract coordinates for each detected face.
-                    left = int(box['left'])
-                    top = int(box['top'])
-                    right = int(box['right'])
-                    bottom = int(box['bottom'])
-                    
-                    # Draw a green rectangle around the face.
-                    cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+                return data["bounding_boxes"][0]
 
         except requests.exceptions.RequestException as e:
             self.failure_count += 1
@@ -79,6 +73,26 @@ class FaceDetectionFilter(BaseFilter):
         except Exception as e:
             self.failure_count += 1
             logging.error(f"An error occurred in the face detection filter ({self.failure_count}/{self.max_failures}): {e}")
+        
+        return None # Return None if detection fails or no faces are found
+
+    def process(self, frame: np.ndarray) -> Optional[np.ndarray]:
+        """
+        Detects faces and draws bounding boxes on the frame.
+        If it fails consecutively, it will disable itself.
+        """
+        bounding_boxes = self._detect_faces(frame)
+        
+        if bounding_boxes is not None:
+            for box in bounding_boxes:
+                # Extract coordinates for each detected face.
+                left = int(box['left'])
+                top = int(box['top'])
+                right = int(box['right'])
+                bottom = int(box['bottom'])
+                
+                # Draw a green rectangle around the face.
+                cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
 
         # Check if the failure limit has been reached.
         if self.failure_count >= self.max_failures:
