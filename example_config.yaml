@@ -7,6 +7,8 @@ app:
   camera: 0
 
 filters:
+  gif_overlay:
+    gif_path: "test_data/gifs/cat.gif"
   face_detection:
     # Overrides the default URL for the face detection inference server.
     ws_url: "ws://127.0.0.1:8000/ws/predict"
@@ -17,4 +19,4 @@ filters:
   face_emoji:
     # Overrides the default URL for the face detection inference server.
     ws_url: "ws://127.0.0.1:8000/ws/predict"
-    emoji_folder_path: "face_emojis"
+    emoji_folder_path: "test_data/face_emojis"

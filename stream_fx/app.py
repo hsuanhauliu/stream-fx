@@ -142,7 +142,8 @@ lock = threading.Lock()
 state = {
     "active_effects": [], # A list of effect identifiers, defining the stack
     "effects_enabled": True, # Master toggle for the entire stack
-    "parameter_values": {} # Stores current values for filter parameters
+    "parameter_values": {}, # Stores current values for filter parameters
+    "disabled_filters": set() # Stores identifiers of individually disabled filters
 }
 state_lock = threading.Lock()
 
@@ -168,6 +169,7 @@ class ControlStatus(BaseModel):
     available_filters_by_category: Dict[str, List[FilterInfo]]
     effects_enabled: bool
     parameter_values: Dict[str, Dict[str, Any]]
+    disabled_filters: List[str]
 
 class SetStackRequest(BaseModel):
     effects: List[str] = Field(..., description="An ordered list of effect identifiers.")
@@ -175,6 +177,9 @@ class SetStackRequest(BaseModel):
 class UpdateParameterRequest(BaseModel):
     filter_id: str
     params: Dict[str, Any]
+
+class ToggleFilterRequest(BaseModel):
+    filter_id: str
 
 
 # --- Video Streaming Endpoint ---
@@ -206,6 +211,7 @@ async def get_status():
         active_effects = list(state["active_effects"])
         effects_enabled = state["effects_enabled"]
         param_values = dict(state["parameter_values"])
+        disabled_filters = list(state["disabled_filters"])
     
     # Group available filters by category
     available_by_category = defaultdict(list)
@@ -222,7 +228,8 @@ async def get_status():
         "active_effects": active_effects, 
         "available_filters_by_category": available_by_category, 
         "effects_enabled": effects_enabled,
-        "parameter_values": param_values
+        "parameter_values": param_values,
+        "disabled_filters": disabled_filters
     }
 
 @app.post("/control/set_stack", response_model=Dict)
@@ -275,6 +282,24 @@ async def update_parameter(request: UpdateParameterRequest):
             logging.info(f"Updated parameters for '{request.filter_id}': {request.params}")
             return {"status": "success"}
         return {"status": "error", "message": "Filter not found"}
+
+@app.post("/control/toggle_filter", response_model=Dict)
+async def toggle_filter(request: ToggleFilterRequest):
+    """Toggles a single filter in the active stack on or off."""
+    with state_lock:
+        filter_id = request.filter_id
+        if filter_id in state["disabled_filters"]:
+            state["disabled_filters"].remove(filter_id)
+            action = "enabled"
+        else:
+            state["disabled_filters"].add(filter_id)
+            action = "disabled"
+            # Call deactivate hook when an individual filter is disabled
+            if filter_id in loaded_plugins:
+                loaded_plugins[filter_id].on_deactivate()
+
+        logging.info(f"Filter '{filter_id}' {action} via API.")
+        return {"status": "success", "disabled_filters": list(state["disabled_filters"])}
 
 
 # --- Web UI Endpoint ---
@@ -398,6 +423,7 @@ def main():
             with state_lock:
                 active_stack = list(state["active_effects"])
                 is_effects_enabled = state["effects_enabled"]
+                disabled_filters = set(state["disabled_filters"])
 
             processed_frame = frame
             effects_to_remove = []
@@ -405,6 +431,9 @@ def main():
             # Apply the stack of filters in order, if enabled
             if is_effects_enabled:
                 for effect_id in active_stack:
+                    if effect_id in disabled_filters:
+                        continue # Skip individually disabled filters
+
                     if effect_id in loaded_plugins:
                         result_frame = loaded_plugins[effect_id].process(processed_frame)
                         
