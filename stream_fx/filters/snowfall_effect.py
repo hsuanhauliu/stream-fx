@@ -18,7 +18,7 @@ class SnowfallFilter(BaseFilter):
 
     @property
     def category(self) -> str:
-        return "Animation"
+        return "Overlay"
 
     def __init__(self):
         """Initializes the filter's state."""
