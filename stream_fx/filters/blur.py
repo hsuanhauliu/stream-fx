@@ -21,7 +21,7 @@ class BlurBackgroundFilter(BaseFilter):
 
     @property
     def category(self) -> str:
-        return "Basic"
+        return "Background"
 
     def get_parameters(self) -> List[Dict[str, Any]]:
         """Declare the adjustable blur intensity parameter."""

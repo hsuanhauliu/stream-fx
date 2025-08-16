@@ -31,6 +31,10 @@ class FaceDetectionFilter(BaseFilter):
     def name(self) -> str:
         return "Face Detection (Advanced)"
 
+    @property
+    def category(self) -> str:
+        return "Face"
+
     def __init__(self):
         """Initializes the filter with default URLs and connection state."""
         self.server_url = "http://127.0.0.1:8000/predict"

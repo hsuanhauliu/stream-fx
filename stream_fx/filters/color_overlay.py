@@ -18,7 +18,7 @@ class ColorOverlayFilter(BaseFilter):
 
     @property
     def category(self) -> str:
-        return "Artistic"
+        return "Overlay"
 
     def __init__(self):
         """Initializes the filter with default color (red) and opacity."""
