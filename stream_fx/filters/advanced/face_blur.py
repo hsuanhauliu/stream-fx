@@ -14,7 +14,7 @@ class FaceBlurFilter(FaceDetectionFilter):
 
     @property
     def name(self) -> str:
-        return "Face Blur (Advanced)"
+        return "Face Blur"
 
     def process(self, frame: np.ndarray) -> Optional[np.ndarray]:
         """

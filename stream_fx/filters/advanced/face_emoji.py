@@ -17,7 +17,7 @@ class FaceEmojiFilter(FaceDetectionFilter):
 
     @property
     def name(self) -> str:
-        return "Face Emoji (Advanced)"
+        return "Face Emoji"
 
     def __init__(self):
         """Initializes the filter and prepares to load overlay images."""

@@ -29,7 +29,7 @@ class FaceDetectionFilter(BaseFilter):
 
     @property
     def name(self) -> str:
-        return "Face Detection (Advanced)"
+        return "Face Detection"
 
     @property
     def category(self) -> str:
