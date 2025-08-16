@@ -99,7 +99,7 @@ def load_plugins_from_directory(directory: str, module_prefix: str, config: Dict
                 logging.error(f"An unexpected error occurred while loading plugin from {filename}: {e}")
     return plugins
 
-def load_all_plugins(enable_advanced: bool, config: Dict[str, Any]) -> Dict[str, BaseFilter]:
+def load_all_plugins(enable_advanced: bool, enable_experimental: bool, config: Dict[str, Any]) -> Dict[str, BaseFilter]:
     """Dynamically loads all filter plugins."""
     all_plugins = {}
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -115,6 +115,14 @@ def load_all_plugins(enable_advanced: bool, config: Dict[str, Any]) -> Dict[str,
         all_plugins.update(load_plugins_from_directory(advanced_filters_dir_path, "filters.advanced", config))
     else:
         logging.info("Advanced filters disabled. To enable, use the --enable_advanced_filters flag.")
+
+    # Conditionally load experimental filters
+    if enable_experimental:
+        logging.info("Experimental filters enabled. Loading...")
+        experimental_filters_dir_path = os.path.join(filters_dir_path, "experimental")
+        all_plugins.update(load_plugins_from_directory(experimental_filters_dir_path, "filters.experimental", config))
+    else:
+        logging.info("Experimental filters disabled. To enable, use the --enable_experimental_filters flag.")
         
     return all_plugins
 
@@ -347,6 +355,11 @@ def parse_arguments():
         help='Enable loading of advanced filters from the filters/advanced directory.'
     )
     parser.add_argument(
+        '--enable_experimental_filters',
+        action='store_true',
+        help='Enable loading of experimental filters from the filters/experimental directory.'
+    )
+    parser.add_argument(
         '--config',
         type=str,
         default=None,
@@ -375,7 +388,7 @@ def main():
 
     # Load configuration and then plugins
     config = load_config(args.config)
-    loaded_plugins = load_all_plugins(args.enable_advanced_filters, config)
+    loaded_plugins = load_all_plugins(args.enable_advanced_filters, args.enable_experimental_filters, config)
 
     # Initialize parameter values in the global state
     with state_lock:
@@ -476,3 +489,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
