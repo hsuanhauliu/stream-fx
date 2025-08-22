@@ -1,4 +1,5 @@
 import cv2
+import mediapipe as mp
 import numpy as np
 import requests
 import base64
@@ -7,20 +8,19 @@ import json
 import threading
 from typing import Dict, Any, Optional, List
 
-# The 'websockets' library is required for this filter.
-# Please ensure it is added to your requirements.txt: `websockets`
+# --- Optional Dependencies ---
 try:
     import websockets.sync.client
 except ImportError:
-    logging.warning("The 'websockets' library is not installed. WebSocket support will be disabled.")
     websockets = None
+
 
 from ..base_filter import BaseFilter
 
 class FaceDetectionFilter(BaseFilter):
     """
-    Detects faces by calling a local inference server and draws bounding boxes.
-    Supports WebSocket for efficient communication, with an HTTP fallback.
+    Detects faces and draws bounding boxes.
+    Uses MediaPipe by default, but can be configured to use a remote inference server (HTTP/WebSocket).
     """
 
     @property
@@ -36,34 +36,44 @@ class FaceDetectionFilter(BaseFilter):
         return "Face"
 
     def __init__(self):
-        """Initializes the filter with default URLs and connection state."""
-        self.server_url = "http://127.0.0.1:8000/predict"
+        """Initializes the filter's state."""
+        self.detection_mode = 'none' # Will be set in initialize()
+        # Server-based detection
+        self.server_url = None
         self.ws_url = None
         self.ws_connection = None
         self.ws_lock = threading.Lock()
         self.failure_count = 0
         self.max_failures = 5
+        # MediaPipe-based detection
+        self.face_detection = None
 
     def initialize(self, config: Dict[str, Any] = None):
-        """
-        Overrides the server URLs if they are provided in the config.
-        """
+        """Initializes the detection mode based on the provided configuration."""
+        use_server = False
         if config:
-            if 'server_url' in config:
+            if 'ws_url' in config and websockets:
+                self.ws_url = config['ws_url']
+                self.detection_mode = 'ws'
+                logging.info(f"Face detection filter using WebSocket URL: {self.ws_url}")
+                use_server = True
+            elif 'server_url' in config:
                 self.server_url = config['server_url']
+                self.detection_mode = 'http'
                 logging.info(f"Face detection filter using custom HTTP URL: {self.server_url}")
-            if 'ws_url' in config:
-                if websockets:
-                    self.ws_url = config['ws_url']
-                    logging.info(f"Face detection filter using WebSocket URL: {self.ws_url}")
-                else:
-                    logging.warning("WebSocket URL provided in config, but 'websockets' library is not installed. Ignoring.")
+                use_server = True
+
+        if not use_server:
+            if mp:
+                self.detection_mode = 'mediapipe'
+                self.face_detection = mp.solutions.face_detection.FaceDetection(min_detection_confidence=0.5)
+                logging.info("Face detection filter using built-in MediaPipe.")
+            else:
+                self.detection_mode = 'none'
+                logging.warning("No server URL provided and 'mediapipe' is not installed. Face detection will be disabled.")
 
     def on_deactivate(self):
-        """
-        Called when the filter is removed from the active stack.
-        Closes any open WebSocket connection.
-        """
+        """Cleans up resources when the filter is deactivated."""
         with self.ws_lock:
             if self.ws_connection:
                 try:
@@ -73,6 +83,9 @@ class FaceDetectionFilter(BaseFilter):
                     logging.error(f"Error closing WebSocket connection: {e}")
                 finally:
                     self.ws_connection = None
+        if self.face_detection:
+            self.face_detection.close()
+            self.face_detection = None
 
     def _detect_faces_http(self, payload: Dict) -> Optional[List[Dict[str, int]]]:
         """Sends detection request via HTTP POST."""
@@ -89,7 +102,7 @@ class FaceDetectionFilter(BaseFilter):
         return None
 
     def _detect_faces_ws(self, payload: Dict) -> Optional[List[Dict[str, int]]]:
-        """Sends detection request via WebSocket, establishing connection if needed."""
+        """Sends detection request via WebSocket."""
         try:
             with self.ws_lock:
                 if self.ws_connection is None:
@@ -105,32 +118,49 @@ class FaceDetectionFilter(BaseFilter):
         except Exception as e:
             logging.debug(f"WebSocket communication error: {e}")
             self.failure_count += 1
-            self.on_deactivate() # Close the connection on error
+            self.on_deactivate()
         return None
 
+    def _detect_faces_mediapipe(self, frame: np.ndarray) -> Optional[List[Dict[str, int]]]:
+        """Detects faces using the MediaPipe library."""
+        if self.face_detection is None:
+            self.initialize() # Re-initialize if deactivated
+        
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self.face_detection.process(rgb_frame)
+        
+        boxes = []
+        if results.detections:
+            h, w, _ = frame.shape
+            for detection in results.detections:
+                box = detection.location_data.relative_bounding_box
+                boxes.append({
+                    "left": int(box.xmin * w),
+                    "top": int(box.ymin * h),
+                    "right": int((box.xmin + box.width) * w),
+                    "bottom": int((box.ymin + box.height) * h)
+                })
+        return boxes
+
     def _detect_faces(self, frame: np.ndarray) -> Optional[List[Dict[str, int]]]:
-        """
-        Calls the inference server to detect faces and returns a list of bounding boxes.
-        """
+        """Dispatches to the correct detection method based on the initialized mode."""
+        if self.detection_mode == 'mediapipe':
+            return self._detect_faces_mediapipe(frame)
+        
+        # For server modes, prepare the payload
         _, buffer = cv2.imencode('.jpg', frame)
         base64_img = base64.b64encode(buffer).decode('utf-8')
         payload = {"base64_imgs": [base64_img]}
 
-        try:
-            if self.ws_url:
-                return self._detect_faces_ws(payload)
-            else:
-                return self._detect_faces_http(payload)
-        except Exception as e:
-            self.failure_count += 1
-            logging.error(f"An unexpected error occurred during face detection ({self.failure_count}/{self.max_failures}): {e}")
-            return None
+        if self.detection_mode == 'ws':
+            return self._detect_faces_ws(payload)
+        elif self.detection_mode == 'http':
+            return self._detect_faces_http(payload)
+        
+        return None # No valid detection mode
 
     def process(self, frame: np.ndarray) -> Optional[np.ndarray]:
-        """
-        Detects faces and draws bounding boxes on the frame.
-        If it fails consecutively, it will disable itself.
-        """
+        """Detects faces and draws bounding boxes on the frame."""
         bounding_boxes = self._detect_faces(frame)
         
         if bounding_boxes is not None:
@@ -138,7 +168,7 @@ class FaceDetectionFilter(BaseFilter):
                 left, top, right, bottom = map(int, [box['left'], box['top'], box['right'], box['bottom']])
                 cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
 
-        if self.failure_count >= self.max_failures:
+        if self.detection_mode in ['http', 'ws'] and self.failure_count >= self.max_failures:
             logging.warning(f"Face detection filter failed {self.max_failures} consecutive times. Disabling.")
             self.failure_count = 0
             return None
